@@ -19,12 +19,14 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "spi.h"
+#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdint.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -34,6 +36,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define cs_Port GPIOB
+#define cs_Pin GPIO_PIN_8
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -81,14 +85,18 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
+  MX_SPI1_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
-
+  HAL_GPIO_WritePin(cs_Port, cs_Pin, 1);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  uint8_t adc_TxData[3] = {0x01, 0x80, 0x00};
+  uint8_t adc_RxData[3] = {0x00, 0x00, 0x00};
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -98,6 +106,23 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	  HAL_GPIO_WritePin(cs_Port, cs_Pin, 0);
+	  HAL_SPI_TransmitReceive(&hspi1, adc_TxData, adc_RxData, 3, HAL_MAX_DELAY);
+	  HAL_GPIO_WritePin(cs_Port, cs_Pin, 1);
+
+	  // find the adc value by only keeping the last 10 bits
+	  uint16_t comb = (adc_RxData[1] << 8) | adc_RxData[2];
+	  uint16_t mask = 0;
+	  for (int i = 0; i <= 9;i++){
+		  mask = mask | (1<<i);
+	  }
+	  uint16_t adc_value = comb & mask;
+
+	  // use linear mapping. Take the range 0-1023 of adc_value and map to 1000-2000 for on time of PWM
+	  uint16_t mapped_value = (int)(adc_value * 1000.0 / 1023) + 1000;
+	  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, mapped_value);
+
+	  HAL_Delay(10);
   }
   /* USER CODE END 3 */
 }
