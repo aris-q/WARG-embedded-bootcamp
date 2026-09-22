@@ -38,6 +38,9 @@
 /* USER CODE BEGIN PD */
 #define cs_Port GPIOB
 #define cs_Pin GPIO_PIN_8
+#define min_PWM 1300
+#define range_PWM 1000
+#define SPI_DELAY 100
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -93,8 +96,17 @@ int main(void)
   MX_SPI1_Init();
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
-  HAL_GPIO_WritePin(cs_Port, cs_Pin, 1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+
+  // Start communication with ADC
+  HAL_GPIO_WritePin(cs_Port, cs_Pin, GPIO_PIN_SET);
+
+  /*
+    3 byte request
+    Byte 0: 0x01 (7 leading zeros and a start Bit on Bit 1)
+    Byte 1: 0x80 (Bit 7 => 1 to establish single-ended mode and Bits 6-4 => 000 to select Channel 0)
+    Byte 3: 0x00 byte to maintain clock cycles for receiving the rest of the data
+  */
   uint8_t adc_TxData[3] = {0x01, 0x80, 0x00};
   uint8_t adc_RxData[3] = {0x00, 0x00, 0x00};
   /* USER CODE END 2 */
@@ -106,20 +118,20 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  HAL_GPIO_WritePin(cs_Port, cs_Pin, 0);
-	  HAL_SPI_TransmitReceive(&hspi1, adc_TxData, adc_RxData, 3, HAL_MAX_DELAY);
-	  HAL_GPIO_WritePin(cs_Port, cs_Pin, 1);
+	  HAL_GPIO_WritePin(cs_Port, cs_Pin, GPIO_PIN_RESET);
+    HAL_StatusTypeDef spi_Status = HAL_SPI_TransmitReceive(&hspi1, adc_TxData, adc_RxData, sizeof(adc_TxData) / sizeof(adc_TxData[0]), HAL_MAX_DELAY);
+    if(spi_Status != HAL_OK)
+    {
+      char errorMessage[] = "SPI Transmit/Receive failed\r\n";
+      HAL_UART_Transmit(&huart2, (uint8_t*)errorMessage, sizeof(errorMessage) - 1, SPI_DELAY);
+    }
+	  HAL_GPIO_WritePin(cs_Port, cs_Pin, GPIO_PIN_SET);
 
 	  // find the adc value by only keeping the last 10 bits
-	  uint16_t comb = (adc_RxData[1] << 8) | adc_RxData[2];
-	  uint16_t mask = 0;
-	  for (int i = 0; i <= 9;i++){
-		  mask = mask | (1<<i);
-	  }
-	  uint16_t adc_value = comb & mask;
+    uint16_t adc_value = ((adc_RxData[1] & 0x03) << 8) | adc_RxData[2];
 
-	  // use linear mapping. Take the range 0-1023 of adc_value and map to 1000-2000 for on time of PWM
-	  uint16_t mapped_value = (int)(adc_value * 1000.0 / 1023) + 1000;
+    // use linear mapping. Take the range 0-1023 of adc_value and map to 1000-2000 for on time of PWM
+	  uint16_t mapped_value = (int)(adc_value * range_PWM/ 1023) + min_PWM;
 	  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, mapped_value);
 
 	  HAL_Delay(10);
